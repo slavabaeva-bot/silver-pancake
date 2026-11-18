@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Онлайн голосование</title>
+<style>
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: #f5f7fa;
+    margin: 0;
+    padding: 20px;
+    color: #222;
+  }
+  .card {
+    max-width: 480px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 14px;
+    padding: 24px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.08);
+  }
+  h2 { margin: 0 0 16px; font-size: 20px; }
+  .option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 2px solid #e2e6ee;
+    background: #fff;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    font-size: 15px;
+    transition: all .15s;
+    position: relative;
+    overflow: hidden;
+  }
+  .option:hover:not(:disabled) { border-color: #4285f4; }
+  .option:disabled { cursor: default; }
+  .option.selected { border-color: #4285f4; background: #eef4ff; }
+  .option .label { position: relative; z-index: 2; display: flex; justify-content: space-between; }
+  .bar {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    background: rgba(66,133,244,.18);
+    width: 0;
+    transition: width .4s ease;
+    z-index: 1;
+  }
+  .count { color: #4285f4; font-weight: 600; }
+  .meta { font-size: 13px; color: #667; margin-top: 12px; text-align: center; }
+  .status { font-size: 13px; color: #888; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2 id="question">Какой вариант вы выбираете?</h2>
+  <div id="options"></div>
+  <div class="meta">Всего голосов: <span id="total">0</span></div>
+  <div class="status" id="status">Подключение…</div>
+</div>
+
+<script type="module">
+  // ==== НАСТРОЙКА ====
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, onValue, runTransaction, get }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    databaseURL: "https://ВАШ-ПРОЕКТ-default-rtdb.firebaseio.com" // <-- замените
+  };
+
+  const POLL_ID = "poll1"; // можно менять под разные голосования
+  const OPTIONS = ["Вариант A", "Вариант B", "Вариант C"];
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const pollRef = ref(db, "polls/" + POLL_ID);
+
+  // ==== Инициализация при первом запуске ====
+  const snap = await get(pollRef);
+  if (!snap.exists()) {
+    const init = {};
+    OPTIONS.forEach((_, i) => init["votes/opt" + i] = 0);
+    await runTransaction(pollRef, () => init);
+  }
+
+  // ==== Отрисовка ====
+  const optionsEl = document.getElementById("options");
+  const totalEl = document.getElementById("total");
+  const statusEl = document.getElementById("status");
+
+  let voted = localStorage.getItem("voted_" + POLL_ID);
+
+  OPTIONS.forEach((text, i) => {
+    const btn = document.createElement("button");
+    btn.className = "option";
+    btn.dataset.idx = i;
+    btn.innerHTML = `<span class="bar"></span>
+      <span class="label"><span>${text}</span><span class="count">0</span></span>`;
+    if (voted !== null) btn.disabled = true;
+    if (voted == i) btn.classList.add("selected");
+    btn.addEventListener("click", () => vote(i));
+    optionsEl.appendChild(btn);
+  });
+
+  // ==== Голосование (атомарно) ====
+  async function vote(idx) {
+    if (voted !== null) return;
+    voted = String(idx);
+    localStorage.setItem("voted_" + POLL_ID, voted);
+    document.querySelectorAll(".option").forEach(b => {
+      b.disabled = true;
+      if (b.dataset.idx == idx) b.classList.add("selected");
+    });
+    statusEl.textContent = "Отправка голоса…";
+    try {
+      await runTransaction(ref(db, `polls/${POLL_ID}/votes/opt${idx}`), c => (c || 0) + 1);
+      statusEl.textContent = "Спасибо за голос!";
+    } catch (e) {
+      statusEl.textContent = "Ошибка: " + e.message;
+    }
+  }
+
+  // ==== Реальное время: слушаем изменения ====
+  onValue(pollRef, (snapshot) => {
+    const data = snapshot.val() || {};
+    const votes = data.votes || {};
+    let total = 0;
+    OPTIONS.forEach((_, i) => total += (votes["opt" + i] || 0));
+
+    OPTIONS.forEach((_, i) => {
+      const count = votes["opt" + i] || 0;
+      const btn = optionsEl.querySelector(`[data-idx="${i}"]`);
+      const bar = btn.querySelector(".bar");
+      const cnt = btn.querySelector(".count");
+      const pct = total ? (count / total) * 100 : 0;
+      bar.style.width = pct + "%";
+      cnt.textContent = count + " (" + pct.toFixed(0) + "%)";
+    });
+
+    totalEl.textContent = total;
+    statusEl.textContent = "Данные обновляются в реальном времени";
+  });
+</script>
+</body>
+</html>
